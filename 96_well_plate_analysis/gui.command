@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+import os
 from tkinter import Tk, Label, Button, filedialog, Entry
 import analysis
 
@@ -7,17 +7,15 @@ import analysis
 class GUI:
     def __init__(self, master):
         self.master = master
-        self.entry1 = ""
         self.xtt_file = ""
         self.info_file = ""
-        self.out_file = ""
 
         master.title("Analyze plate reader data")
 
-        self.xtt_file_button = Button(master, text="XTT plate readout", command=self.select_xtt_file)
+        self.xtt_file_button = Button(master, text="Select XTT plate readout", command=self.select_xtt_file)
         self.xtt_file_button.pack()
 
-        self.info_file_button = Button(master, text="text from excel", command=self.select_info_file)
+        self.info_file_button = Button(master, text="Select text from excel", command=self.select_info_file)
         self.info_file_button.pack()
 
         self.analyze_button = Button(master, text="Perform analysis", command=self.analyze)
@@ -41,7 +39,7 @@ class GUI:
     def analyze(self):
         analysis.main(xtt_file=self.xtt_file,
                       info_file=self.info_file,
-                      out_file="test.csv")
+                      out_file=os.path.dirname(self.info_file)+"/results.csv")
 
 
 root = Tk()

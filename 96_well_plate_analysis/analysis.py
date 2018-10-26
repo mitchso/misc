@@ -69,8 +69,13 @@ class Condition(object):
 class Experiment(object):
     def __init__(self):
         self.name = "not assigned"
+        self.cell_line = ""
+        self.passage_number = ""
+        self.media = ""
+        self.incubation_time = ""
         self.conditions = []
         self.controls = []
+        self.sample_dict = {}
 
     def max_concentration(self):
         return max([x.max_concentration() for x in self.conditions])
@@ -81,12 +86,26 @@ class Experiment(object):
     def sort_conditions(self):
         return sorted(self.conditions, key=lambda x: x.name)
 
+    def get_controls(self):
+        return [condition for condition in self.conditions if condition.is_control]
+
+    def no_treatment_od(self):
+        return max(condition.samples[0].average_od() for condition in self.get_controls())
+
 
 def main(xtt_file, info_file, out_file):
     experiment = Experiment()
 
+    # Collect metadata
+    with open(info_file, 'r') as fname:
+        metadata = [line.split(sep='\t')[1] for line in fname.readlines()[1:6]]
+        experiment.cell_line = metadata[0]
+        experiment.passage_number = metadata[1]
+        experiment.media = metadata[2]
+        experiment.incubation_time = metadata[3]
+
     # Read info from info_file into memory
-    info_table = pandas.read_csv(info_file, sep='\t')
+    info_table = pandas.read_csv(info_file, sep='\t', skiprows=6)
     treatment_table = info_table.loc[info_table.ne(0).all(axis=1)]
     control_table = info_table.loc[info_table['Treatment'].isin(['cells only (lysis)', 'cells only'])]
     final_table = pandas.concat([treatment_table, control_table])
@@ -95,21 +114,18 @@ def main(xtt_file, info_file, out_file):
     treatments = list(set([row[1]['Treatment'] for row in final_table.iterrows()]))
     concentrations = list(set([row[1]['Concentration'] for row in final_table.iterrows()]))
 
-
     # Collect sample information
-    sample_dict = {}
     for treatment in treatments:
         for concentration in concentrations:
             sample = Sample()
             for index, row in final_table.iterrows():
                 if row['Treatment'] == treatment:
                     if row['Concentration'] == concentration:
-                        sample.name = treatment+", "+str(concentration)+" nM"
                         sample.treatment = treatment
                         sample.concentration = concentration
+                        sample.name = treatment+", "+str(concentration)+" nM"
                         sample.wells.append(row['Well'])
-                        sample_dict[sample.name] = sample
-
+                        experiment.sample_dict[sample.name] = sample
 
     # Fix weird encoding from old plate reader
     fixed_file = []
@@ -121,26 +137,22 @@ def main(xtt_file, info_file, out_file):
             fixed_4 = fixed_3.replace('\\r\\n\'', '\n')  # remove from end of each line
             fixed_file.append(fixed_4)  # this should be actually fixed
 
-
     # Collect info from input file
-    for key in sample_dict:
-        for well in sample_dict[key].wells:
+    for key in experiment.sample_dict:
+        for well in experiment.sample_dict[key].wells:
             for line in fixed_file:
                 if re.search(well, line):
                     if line.split(sep='\t')[3] == 'Outlier':
                         od_value = line.split(sep='\t')[2]
                     else:
                         od_value = line.split(sep='\t')[3]
-                    sample_dict[key].values.append(float(od_value))
-
-    # Need this for making calculations
-    no_treatment_od = sample_dict['cells only, 0.0 nM'].average_od()
+                    experiment.sample_dict[key].values.append(float(od_value))
 
     # Group values into conditions
     for treatment in treatments:
         condition = Condition()
         condition.name = treatment
-        condition.samples = [sample for sample in sample_dict.values() if sample.treatment is treatment]
+        condition.samples = [sample for sample in experiment.sample_dict.values() if sample.treatment is treatment]
         experiment.conditions.append(condition)
 
     # Write output table
@@ -155,20 +167,17 @@ def main(xtt_file, info_file, out_file):
                                                            ", ".join(str(x) for x in sample.values),
                                                            round(sample.average_od(), 3),
                                                            round(sample.cv(), 3),
-                                                           round(sample.viability(no_treatment_od), 3),
+                                                           round(sample.viability(experiment.no_treatment_od()), 3),
                                                            "\n"])))
-
-    print()
 
     # Add data to graph
     y_offset = 1.0
     for condition in experiment.sort_conditions():
         if not condition.is_control():
             x = [sample.concentration*y_offset for sample in condition.sort_samples()]
-            y = [sample.viability(no_treatment_od) for sample in condition.sort_samples()]
+            y = [sample.viability(experiment.no_treatment_od()) for sample in condition.sort_samples()]
             errors = [sample.cv() for sample in condition.sort_samples()]
             plt.errorbar(x, y, yerr=errors, **condition.style_parameters())
-
             y_offset += 0.015
 
     # Stylize the graph
@@ -180,10 +189,16 @@ def main(xtt_file, info_file, out_file):
     [ax.spines[spine].set_visible(False) for spine in ax.spines  # Remove borders around the top and right side
      if ax.spines[spine].spine_type is 'right'
      or ax.spines[spine].spine_type is 'top']
-
+    ax.tick_params(which='minor', length=4)
     plt.hlines(100, xmin=experiment.min_concentration(), xmax=experiment.max_concentration(), linestyles='dashed')
     plt.hlines(0, xmin=experiment.min_concentration(), xmax=experiment.max_concentration(), linestyles='dashed')
-    # ax.spines[spine].set_visible(False)
+
+    plt.title(" ".join([experiment.cell_line,
+                        experiment.passage_number,
+                        experiment.incubation_time,
+                        "incubation in",
+                        experiment.media]))
+
     plt.legend(frameon=False)  # Add legend
 
     # Finally, display the graph
